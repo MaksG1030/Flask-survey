@@ -1,66 +1,80 @@
 from flask import Flask, request, render_template, redirect, flash, session
 from flask_debugtoolbar import DebugToolbarExtension
-import surveys
+from surveys import satisfaction_survey as survey
+
+# key names will use to store some things in the session;
+# put here as constants so we're guaranteed to be consistent in
+# our spelling of these
+RESPONSES_KEY = "responses"
 
 app = Flask(__name__)
-app.secret_key = 'SECRETTTSECRETTTS'
-app.config["SECRET_KEY"] = "SECRET"
-debug = DebugToolbarExtension(app)
+app.config['SECRET_KEY'] = "never-tell!"
 app.config['DEBUG_TB_INTERCEPT_REDIRECTS'] = False
+
+debug = DebugToolbarExtension(app)
 
 
 @app.route("/")
-def index():
-    '''Displays the survey title and instruction. After clicking form submit, redirects
-    page to /session decorator'''
-    title = 'PICK A SURVEY'
-    instructions = 'CHOOSE THE SURVEY THAT BEST SUITS YOU'
-    lst_of_surveys = surveys.surveys
-    return render_template("index.html", title=title, instructions=instructions, surveys=lst_of_surveys)
+def show_survey_start():
+    """Select a survey."""
+
+    return render_template("survey_start.html", survey=survey)
 
 
-@app.route('/session', methods=["POST"]) 
-def session_creator(): 
-    '''Initializes the session['responses'], holding our questions, and redirects
-    to our first question'''
-    session['responses'] = []
-    session['chosen_title'] = request.form.get('survey_choice', 'satisfaction')
-    print(session['chosen_title'])
-    responses_length = len(session['responses'])
-    return redirect(f'/question/{responses_length}')
+@app.route("/begin", methods=["POST"])
+def start_survey():
+    """Clear the session of responses."""
 
+    session[RESPONSES_KEY] = []
 
-@app.route("/question/<int:id>")
-def question(id):
-    '''Question page that shows each individual question, using the length of our current 
-    session['responses'] length as our id'''
-    responses_length = len(session['responses'])
-    #ends our survey and also stops people from accessing questions higher than the limit
-    print(surveys.surveys['satisfaction'].questions)
-    if id >= len(surveys.surveys[session['chosen_title']].questions): 
-        return redirect('/endpage')
-    #if someone tinkers with our id, we make sure to spam them with a flash saying 'stop' and deny access
-    if id != responses_length:
-        flash("stop")
-        return redirect(f'/question/{responses_length}')
-    question = surveys.surveys[session['chosen_title']].questions[id].question
-    choices = surveys.surveys[session['chosen_title']].questions[id].choices
-
-    return render_template("question.html", question=question, choices=choices)
+    return redirect("/questions/0")
 
 
 @app.route("/answer", methods=["POST"])
-def answer():
-    '''saves our answers in the session response and redirects us to the next question'''
-    answer = request.form
-    sesh = session['responses']
-    sesh.append(answer["choice"])
-    session['responses'] = sesh
-    id = len(session['responses'])
-    return redirect(f"/question/{id}")
+def handle_question():
+    """Save response and redirect to next question."""
+
+    # get the response choice
+    choice = request.form['answer']
+
+    # add this response to the session
+    responses = session[RESPONSES_KEY]
+    responses.append(choice)
+    session[RESPONSES_KEY] = responses
+
+    if (len(responses) == len(survey.questions)):
+        # They've answered all the questions! Thank them.
+        return redirect("/complete")
+
+    else:
+        return redirect(f"/questions/{len(responses)}")
 
 
-@app.route('/endpage')
-def endpage():
-    '''our end-page'''
-    return render_template("answer.html")
+@app.route("/questions/<int:qid>")
+def show_question(qid):
+    """Display current question."""
+    responses = session.get(RESPONSES_KEY)
+
+    if (responses is None):
+        # trying to access question page too soon
+        return redirect("/")
+
+    if (len(responses) == len(survey.questions)):
+        # They've answered all the questions! Thank them.
+        return redirect("/complete")
+
+    if (len(responses) != qid):
+        # Trying to access questions out of order.
+        flash(f"Invalid question id: {qid}.")
+        return redirect(f"/questions/{len(responses)}")
+
+    question = survey.questions[qid]
+    return render_template(
+        "question.html", question_num=qid, question=question)
+
+
+@app.route("/complete")
+def complete():
+    """Survey complete. Show completion page."""
+
+    return render_template("completion.html")
